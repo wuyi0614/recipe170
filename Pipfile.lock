@@ -1,0 +1,20 @@
+{
+    "_meta": {
+        "hash": {
+            "sha256": "61292c856b5b486378f8a41c1fcbad12d17c5462a04876f10b7e82e6202356b2"
+        },
+        "pipfile-spec": 6,
+        "requires": {
+            "python_version": "3.9"
+        },
+        "sources": [
+            {
+                "name": "pip_conf_index_global",
+                "url": "https://mirrors.aliyun.com/pypi/simple/",
+                "verify_ssl": true
+            }
+        ]
+    },
+    "default": {},
+    "develop": {}
+}
