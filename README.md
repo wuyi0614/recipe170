@@ -20,3 +20,6 @@ The overall processing of recipe data consists of a few steps:
 - [ ] Procedure
   - [ ] longer-token translator
   - [ ] entity-recognition for cooking/timing/objects
+- [ ] Caveats
+  - [ ] some recipes do not have ingredients!!!
+  - [ ] use steps (ingredient extraction) to supplement to the ingredients
