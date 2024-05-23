@@ -4,10 +4,11 @@
 #
 
 import re
-import csv
+import json
 
 from copy import deepcopy
 from pathlib import Path
+from collections import defaultdict
 
 import pandas as pd
 import numpy as np
@@ -105,7 +106,54 @@ def fuzzy_search_in_context(snippet: str, context: str, span=20):
     return {"text": matched, "start": min(scale), "end": max(scale)}
 
 
-def get_unit(qty: pd.DataFrame, units: dict):
+def _numeric_unit(x: str):
+    # convert 1/4 into digits
+    # convert + into final results
+    # convert parenthesis ５カップ( 300cc
+    # convert 約 into about
+    # convert 7、8本 into simplified form
+    # convert 4～5枚 into ranges
+    # convert Asian chars, ８０ｇ＋８０ｇ
+
+    # skip nan and zero-length character
+    if x == np.nan or len(x) == 0:
+        return None
+
+    # convert numeric units and remove excessive spaces
+    x = re.sub(r'\s+', '', x)
+
+    # 1. quantity + unit, standardised form
+    # forms: 2, 100; 300cc
+    rules = [r'^\d+$', r'^\d+[a-zA-Z]+$']
+    for ru in rules:
+        r = re.findall(ru, x)
+        if r:
+            return str(r.pop())
+
+    # 2. for those modified units and digits, unify their formats
+    r = re.findall(r'^[0-9]+[~、,，.]+[0-9]+\w+', x)
+    if r:
+        out = re.sub(r'[~、,，.]+', '-', r.pop())
+        r = re.findall(r'\d+', out)
+        if r:
+            return str(sum(list(map(lambda it: float(it), r))) / 2)
+
+    # 3. convert ・ into ., e.g. 0・5カップ (cup)
+    r = re.findall(r'^[0-9]+・+[0-9]+\w+', x)
+    if r:
+        out = r.pop()
+        return out if out.endswith('倍') else re.sub('・+', '.', out)
+
+    # 4. convert 80g+80g = 160g
+    r = re.findall(r'^[0-9a-zA-Z]+[+]+[0-9a-zA-Z]+', x)
+    if r:
+        r = re.findall(r'\d+', r.pop())
+        return str(sum(list(map(lambda it: float(it), r))))
+
+    return None
+
+
+def get_unit(qty: pd.DataFrame):
     """
     Convert easy units which are not necessarily for translation.
     The only way to reduce complication is to iteratively refine the qty series.
@@ -121,74 +169,15 @@ def get_unit(qty: pd.DataFrame, units: dict):
     Find units in recipe/unit.json
 
     :param qty: a series of qty entries
-    :param units: a unit dictionary with keys are raw entries
     :return: pd.DataFrame
     """
-
     # convert units into standards
-    def _unit(x: str):
-        # convert 1/4 into digits
-        # convert + into final results
-        # convert parenthesis ５カップ( 300cc
-        # convert 約 into about
-        # convert 7、8本 into simplified form
-        # convert 4～5枚 into ranges
-        # convert Asian chars, ８０ｇ＋８０ｇ
+    qty['converted'] = qty['text'].apply(lambda x: _numeric_unit(x), axis=1)
+    return qty
 
-        # skip nan
-        if x == np.nan:
-            return ''
 
-        # convert numeric units and remove excessive spaces
-        x = re.sub(r'\s+', '', x)
-
-        # 0. pure digits
-        r = re.findall(r'^\d+[\w\W]+', x)
-        if r:
-            return str(r.pop())
-
-        # 1. extract digits + unit modes
-        r = re.findall(r'^[0-9a-zA-Z\.]+', x)
-        if len(x) == 0 or len(r) == 0:
-            print(f'[Numeric] invalid detection: {x}')
-            return 'warning'
-
-        # 2. extract \d+\w modes
-        rjoin = ''.join(r)
-        if rjoin[0] == x[0] and rjoin[-1] == x[-1]:
-            # NB. which is 3 0 0 g == 300g
-            return rjoin
-
-        # 3. extract \d~\d\w modes
-        r = re.findall(r'^[0-9a-zA-Z\~\.]+', x)
-        if r:
-            x = r.pop()
-            x = re.sub(r'[\~]+', '-', x)
-            return x
-
-        # 4. convert `、/[\w]` into ~; for those `1/2` without any chars after, it's 1/2=0.5
-        r = re.findall(r'^[0-9、/，,·\.]+\w+', x)
-        if r:
-            x = r.pop()
-            x = re.sub(r'[、/,，·]+', '-', x)
-            return x
-
-        # 5. convert 5.6個, 1.2倍, 適量（マヨネーズと同量､もしくはマヨネーズの１．５倍）
-        # keep 1.2倍, convert 5.6個
-        r = re.findall(r'[0-9\.]+\w{1}')
-        if r:
-            x = r.pop()
-            return x if x.endswith('倍') else re.sub(r'.', '-', x)
-
-        # 6. convert 80g+80g = 160g
-        r = re.findall(r'^[0-9a-zA-Z\+]+', x)
-        if r:
-            x = r.pop()
-            x = re.findall(r'\d+', x)
-            x = str(sum(list(map(lambda it: float(it), x))))
-
-    for q in qty.qty.values:
-        _numeric(q)
+def get_ingredient(ing: pd.DataFrame):
+    pass
 
 
 def compress(d: pd.Series, file: Path):
@@ -212,35 +201,47 @@ def compress(d: pd.Series, file: Path):
     # get unique items
     uni = series['text'].duplicated()
     uni = series[~uni].reset_index(drop=True)
-    with open(str(file), 'w', encoding='utf8') as csf:
-        # write into csv file by rows
-        writer = csv.writer(csf)
-        writer.writerows([['text', 'recipe_ids']])  # str, str
+    with open(str(file), 'a', encoding='utf8') as f:
         # NB. apply three approaches to find matches
-        for i in tqdm(range(len(uni)), desc='Searching:'):
+        for i in tqdm(range(len(uni)), desc='Compressing'):
             # skip duplicated indexes
             if i not in uni.index:
                 continue
 
             src, rid = uni.loc[i, 'text'], uni.loc[i, 'recipe_id']
-            # 0. find all the unique values
-            ids = uni.loc[uni['text'] == src, 'recipe_id'].tolist()
-            # 1. use pandas str match
-            src2 = re.sub(r'[\)\]\}】」》]', '>', src)
-            src2 = re.sub(r'[\(\[\{【「《]', '<', src2)
+            row = dict(source=src, success=[], error=[])  # ... the container
+            row['success'] += [[rid, src]]
+            # 1. find duplicates
+            dup = series[series['text'] == src]
+            dup = dup[['recipe_id', 'text']]
+            row['success'] += dup.values.tolist()
+
+            # 2. use regex to find matches
+            # TODO: eliminate those invalid entries, e.g. less than \w{2,}
+            valid = re.findall(r'[\w\d]{2,}', src)
+            if len(valid) == 0:
+                print(f'Invalid source: {src}')
+                row['error'] += [[rid, src]]
+                f.write(json.dumps(row) + '\n')
+                continue
+
+            src2 = re.sub(r'[\)\]\}】」》]', ' ', src)
+            src2 = re.sub(r'[\(\[\{【「《]', ' ', src2)
             try:
-                mask1 = uni['text'].apply(lambda x: len(re.findall(src2+'$', str(x))) > 0)
-                # 2. use fuzzy searc
+                # TODO: use ^ or $ to increase accuracy & computing complication
+                mask1 = uni['text'].apply(lambda x: len(re.findall(src2, str(x))) > 0)
+                # 2. use fuzzy search
                 # mask2 = series['text'].apply(lambda x: fuzzy_search_in_context(src, x) != {})
-                mid = uni.loc[mask1, 'recipe_id'].values.tolist()
-                row = [['SUCCESS', src, ','.join(set([rid] + ids + mid))]]
+                mid = uni.loc[mask1, :]
+                mid = mid[['recipe_id', 'text']]
+                row['success'] += mid.values.tolist()
                 # write into a csv file
                 uni = uni[~mask1]
             except re.error:
-                row = [['ERROR', src, rid]]
+                row['error'] += [[rid, src]]
 
             print(f'Only {len(uni)} rows left!')
-            writer.writerows(row)
+            f.write(json.dumps(row) + '\n')
 
 
 if __name__ == '__main__':
@@ -251,11 +252,9 @@ if __name__ == '__main__':
     ingfile = path / 'fine-ing-table.csv'
     ing = pd.read_csv(ingfile, encoding='utf8')
 
-    compress(ing[['recipe_id', 'ing']], file=path / 'unique-ing.csv')
-    compress(ing[['recipe_id', 'qty']], file=path / 'unique-qty.csv')
+    compress(ing[['recipe_id', 'ing']], file=path / 'unique-ing.text')
+    compress(ing[['recipe_id', 'qty']], file=path / 'unique-qty.text')
 
-    uni_ing = pd.read_csv(path / 'unique-ing.csv', encoding='utf8')
-    uni_qty = pd.read_csv(path / 'unique-qty.csv', encoding='utf8')
     # transform full char to half char
     assert full2half('２００　ＣＣ～８０ｇ') == '200\u3000CC~80g', 'should remove \u3000 as well'
 

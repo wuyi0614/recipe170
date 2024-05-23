@@ -9,6 +9,12 @@
   - Python 3.9
   - Pipenv 2023.11.17
 
+- 1.2 Preprocessing
+  - Step 1: cleaning texts
+  - Step 2: unify quantity units
+  - Step 3: get unique values and match all entries
+  - Step 4: translate ingredients and quantities
+
 ### 2. TODOs
 
 The overall processing of recipe data consists of a few steps:
