@@ -111,12 +111,6 @@ def quick_translate(client,
     return results
 
 
-def remap_translation(translation: pd.DataFrame,
-                      org_table: pd.DataFrame):
-    """Remap translations back to the original ing/qty data by searching the recipe ids."""
-    pass
-
-
 if __name__ == '__main__':
     import pandas as pd
 
